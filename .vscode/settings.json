@@ -1,0 +1,21 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.pythonPath": ".venv/bin/python",
+
+  // авто-форматирование
+  "python.formatting.provider": "black",
+  "editor.formatOnSave": true,
+
+  // lint
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": true,
+
+  // скрывать служебные файлы
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.venv": true
+  },
+
+  // jupyter (если нужно)
+  "jupyter.interpreter.hashPaths": [".venv/bin/python"]
+}
