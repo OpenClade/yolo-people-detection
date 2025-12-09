@@ -35,7 +35,8 @@ class Application:
             if self.monitoring_enabled and not self.zone_service.edit_enabled:
                 person_boxes = self.detection_service.detect_persons(frame)
 
-                bbox_only = [(x1, y1, x2, y2) for x1, y1, x2, y2, _ in person_boxes]
+                bbox_only = [(x1, y1, x2, y2)
+                             for x1, y1, x2, y2, _ in person_boxes]
                 intrusion = self.zone_service.check_intrusion(bbox_only)
                 self.zone_service.update_alarm(intrusion, person_boxes)
 
@@ -62,89 +63,63 @@ class Application:
         cv2.destroyAllWindows()
 
     def _handle_key(self, key: int) -> bool:
-        if key == ord('q'):
-            return False
-        elif key == ord(' '):
-            self.video_service.toggle_pause()
-            print(
-                f"{'⏸️  Paused' if self.video_service.is_paused() else '▶️  Playing'}")
-        elif key == ord('e') or key == ord('E'):
-            if self.video_service.is_paused():
-                self.zone_service.edit_enabled = not self.zone_service.edit_enabled
-                print(
-                    f"Edit mode: {'ON ✏️' if self.zone_service.edit_enabled else 'OFF'}")
-            else:
-                print("⚠️  Pause the video first (SPACE)")
-        elif key == ord('f'):
-            self.zone_service.finish_polygon()
-        elif key == ord('s'):
-            self.zone_service.save_zones()
-        elif key == ord('c'):
-            self.zone_service.zones.clear()
-            print("🗑️  All zones cleared")
-        elif key == ord('m') or key == ord('M'):
-            self.monitoring_enabled = not self.monitoring_enabled
-            print(
-                f"{'📹 Monitoring enabled' if self.monitoring_enabled else '⏸️  Monitoring disabled'}")
-        elif key == ord('d') and self.video_service.is_paused():
-            self._run_detection()
-        elif key == 83 and self.video_service.is_paused():
-            self._seek_frames(1)
-        elif key == 81 and self.video_service.is_paused():
-            self._seek_frames(-1)
-        elif key == 84 and self.video_service.is_paused():
-            self._seek_frames(-30)
-        elif key == 82 and self.video_service.is_paused():
-            self._seek_frames(30)
-        elif key == 27:
+        if key in (ord('q'), 27):
             return False
 
+        handlers = {
+            ord(' '): lambda: (self.video_service.toggle_pause(),
+                              print(f"{'⏸️  Paused' if self.video_service.is_paused() else '▶️  Playing'}")),
+            ord('e'): self._toggle_edit,
+            ord('E'): self._toggle_edit,
+            ord('f'): self.zone_service.finish_polygon,
+            ord('s'): self.zone_service.save_zones,
+            ord('c'): lambda: (self.zone_service.zones.clear(), print("🗑️  All zones cleared")),
+            ord('m'): self._toggle_monitoring,
+            ord('M'): self._toggle_monitoring,
+            ord('d'): lambda: self._run_detection() if self.video_service.is_paused() else None,
+        }
+
+        handler = handlers.get(key)
+        if handler:
+            handler()
         return True
 
-    def _seek_frames(self, offset):
-        self.video_service.seek_frame(offset)
-        current, total = self.video_service.get_frame_info()
-        print(f"⏩ Frame {current}/{total}")
+    def _toggle_edit(self):
+        if self.video_service.is_paused():
+            self.zone_service.edit_enabled = not self.zone_service.edit_enabled
+            print(f"Edit mode: {'ON ✏️' if self.zone_service.edit_enabled else 'OFF'}")
+        else:
+            print("⚠️  Pause the video first (SPACE)")
 
-    def _draw_alarm(self, frame):
+    def _toggle_monitoring(self):
+        self.monitoring_enabled = not self.monitoring_enabled
+        print(f"{'📹 Monitoring enabled' if self.monitoring_enabled else '⏸️  Monitoring disabled'}")
+
+    def _draw_centered_text(self, frame, text, y_offset, font_scale, thickness, color):
         h, w = frame.shape[:2]
-
-        text = "ALARM!"
         font = cv2.FONT_HERSHEY_DUPLEX
-        font_scale = 3
-        thickness = 8
 
         text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
         text_x = (w - text_size[0]) // 2
-        text_y = (h + text_size[1]) // 2
+        text_y = (h + text_size[1]) // 2 + y_offset
 
         cv2.rectangle(frame,
-                     (text_x - 20, text_y - text_size[1] - 20),
-                     (text_x + text_size[0] + 20, text_y + 20),
-                     (0, 0, 0), -1)
+                      (text_x - 10, text_y - text_size[1] - 10),
+                      (text_x + text_size[0] + 10, text_y + 10),
+                      (0, 0, 0), -1)
 
         cv2.putText(frame, text, (text_x, text_y),
-                   font, font_scale, (0, 0, 255), thickness)
+                    font, font_scale, color, thickness)
 
-        if hasattr(self.zone_service, 'intruders') and self.zone_service.intruders:
+    def _draw_alarm(self, frame) -> None:
+        self._draw_centered_text(frame, "ALARM!", 0, 3, 8, (0, 0, 255))
+
+        if self.zone_service.intruders:
             intruder_text = "Intruders: " + \
                 ", ".join([f"ID:{id}" for id in self.zone_service.intruders.keys()])
-            intruder_font_scale = 1
-            intruder_thickness = 2
-            intruder_size = cv2.getTextSize(
-                intruder_text, font, intruder_font_scale, intruder_thickness)[0]
-            intruder_x = (w - intruder_size[0]) // 2
-            intruder_y = text_y + 60
+            self._draw_centered_text(frame, intruder_text, 60, 1, 2, (255, 255, 255))
 
-            cv2.rectangle(frame,
-                         (intruder_x - 10, intruder_y - intruder_size[1] - 10),
-                         (intruder_x + intruder_size[0] + 10, intruder_y + 10),
-                         (0, 0, 0), -1)
-
-            cv2.putText(frame, intruder_text, (intruder_x, intruder_y),
-                       font, intruder_font_scale, (255, 255, 255), intruder_thickness)
-
-    def _run_detection(self):
+    def _run_detection(self) -> None:
         if self.video_service.current_frame is None:
             print("⚠️  No frame available")
             return

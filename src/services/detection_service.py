@@ -1,8 +1,9 @@
 import cv2
+from ultralytics import YOLO
 
 
 class DetectionService:
-    def __init__(self, model):
+    def __init__(self, model: YOLO):
         self.model = model
 
     def detect_persons(self, frame):
@@ -28,11 +29,11 @@ class DetectionService:
             thickness = 3 if is_intruder else 2
 
             cv2.rectangle(frame, (int(x1), int(y1)),
-                         (int(x2), int(y2)), color, thickness)
+                          (int(x2), int(y2)), color, thickness)
 
             label = f"INTRUDER ID:{track_id}" if is_intruder else (
                 f"Person ID:{track_id}" if track_id is not None else "Person")
             cv2.putText(frame, label, (int(x1), int(y1) - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
         return frame

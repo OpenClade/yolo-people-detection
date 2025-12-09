@@ -20,7 +20,6 @@ class ZoneManager:
         self.last_intrusion_time = None
         self.alarm_delay = 3.0
         self.intruders = {}
-        self.current_intruders = set()
 
     def load_zones(self):
         with open(self.json_path, "r") as f:
@@ -64,87 +63,83 @@ class ZoneManager:
         return frame
 
     def draw_current_polygon(self, frame):
-        if len(self.current_points) > 0:
-            pts = np.array(self.current_points, dtype=np.int32)
-            cv2.polylines(frame, [pts], False, (0, 255, 0), 2)
-            for p in self.current_points:
-                cv2.circle(frame, p, 5, (0, 255, 0), -1)
+        if not self.current_points:
+            return
+
+        pts = np.array(self.current_points, dtype=np.int32)
+        cv2.polylines(frame, [pts], False, (0, 255, 0), 2)
+        for p in self.current_points:
+            cv2.circle(frame, p, 5, (0, 255, 0), -1)
 
     def finish_polygon(self):
-        if len(self.current_points) >= 3:
-            self.zones.append({"points": self.current_points.copy()})
-            print(
-                f"✅ Zone #{len(self.zones)} added with {len(self.current_points)} points")
-            self.current_points = []
-        elif len(self.current_points) > 0:
+        if not self.current_points:
+            print("⚠️  No points to finish")
+            return
+
+        if len(self.current_points) < 3:
             print(
                 f"⚠️  Need at least 3 points (current: {len(self.current_points)})")
             self.current_points = []
-        else:
-            print("⚠️  No points to finish")
+            return
+
+        self.zones.append({"points": self.current_points.copy()})
+        print(
+            f"✅ Zone #{len(self.zones)} added with {len(self.current_points)} points")
+        self.current_points = []
+
+    def _is_point_in_any_zone(self, x: int, y: int) -> bool:
+        point = (x, y)
+        for zone in self.zones:
+            pts = np.array(zone["points"], dtype=np.int32)
+            if cv2.pointPolygonTest(pts, point, False) >= 0:
+                return True
+        return False
+
+    def _is_box_in_zone(self, box) -> bool:
+        x1, y1, x2, y2 = box[:4]
+        center_x = int((x1 + x2) / 2)
+        center_y = int((y1 + y2) / 2)
+        bottom_y = int(y2)
+        return (self._is_point_in_any_zone(center_x, center_y) or
+                self._is_point_in_any_zone(center_x, bottom_y))
 
     def check_intrusion(self, bounding_boxes):
-        intrusion_detected = False
+        return any(self._is_box_in_zone(box) for box in bounding_boxes)
 
-        for box in bounding_boxes:
-            x1, y1, x2, y2 = box
+    def _find_active_intruders(self, person_boxes_with_ids, current_time):
+        active = set()
+        for box in person_boxes_with_ids:
+            track_id = box[4]
+            if track_id is None:
+                continue
 
-            center_x = int((x1 + x2) / 2)
-            center_y = int((y1 + y2) / 2)
-            bottom_center_x = center_x
-            bottom_center_y = int(y2)
+            if self._is_box_in_zone(box):
+                active.add(track_id)
+                if track_id not in self.intruders:
+                    print(
+                        f"🚨 ALARM! Person ID:{track_id} entered restricted zone!")
+                self.intruders[track_id] = current_time
+        return active
 
-            for zone in self.zones:
-                pts = np.array(zone["points"], dtype=np.int32)
-
-                if (cv2.pointPolygonTest(pts, (center_x, center_y), False) >= 0 or
-                        cv2.pointPolygonTest(pts, (bottom_center_x, bottom_center_y), False) >= 0):
-                    intrusion_detected = True
-                    break
-
-            if intrusion_detected:
-                break
-
-        return intrusion_detected
+    def _cleanup_expired_intruders(self, current_time):
+        expired = [tid for tid, last_seen in self.intruders.items()
+                   if current_time - last_seen >= self.alarm_delay]
+        for track_id in expired:
+            del self.intruders[track_id]
+            print(f"✅ Person ID:{track_id} cleared (3 seconds passed)")
 
     def update_alarm(self, intrusion_detected, person_boxes_with_ids):
         current_time = time.time()
         active_intruders = set()
 
-        if intrusion_detected and len(person_boxes_with_ids) > 0:
-            for box in person_boxes_with_ids:
-                x1, y1, x2, y2, track_id = box
-                if track_id is None:
-                    continue
-
-                center_x = int((x1 + x2) / 2)
-                center_y = int((y1 + y2) / 2)
-                bottom_center_x = center_x
-                bottom_center_y = int(y2)
-
-                for zone in self.zones:
-                    pts = np.array(zone["points"], dtype=np.int32)
-                    if (cv2.pointPolygonTest(pts, (center_x, center_y), False) >= 0 or
-                            cv2.pointPolygonTest(pts, (bottom_center_x, bottom_center_y), False) >= 0):
-                        active_intruders.add(track_id)
-                        if track_id not in self.intruders:
-                            print(
-                                f"🚨 ALARM! Person ID:{track_id} entered restricted zone!")
-                        self.intruders[track_id] = current_time
-                        break
-
+        if intrusion_detected and person_boxes_with_ids:
+            active_intruders = self._find_active_intruders(
+                person_boxes_with_ids, current_time)
             self.last_intrusion_time = current_time
             if not self.alarm_active:
                 self.alarm_active = True
 
-        expired_intruders = []
-        for track_id, last_seen in list(self.intruders.items()):
-            if current_time - last_seen >= self.alarm_delay:
-                expired_intruders.append(track_id)
-                print(f"✅ Person ID:{track_id} cleared (3 seconds passed)")
-
-        for track_id in expired_intruders:
-            del self.intruders[track_id]
+        self._cleanup_expired_intruders(current_time)
 
         if not self.intruders and self.alarm_active:
             self.alarm_active = False
